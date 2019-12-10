@@ -1,61 +1,112 @@
+#Cargamos librerias
+
+install.packages('e1071')
+install.packages('caret')
+install.packages('caTools')
+install.packages('tm')
+install.packages('SnowballC')
+
 library(e1071) 
 library(rpart)
 library(caret)
-library(tidyverse)
-library(tokenizers)
+library(plyr)
 library(tm)
+library(SnowballC)
+library(caTools)
 
-# Se declara la URL de dónde obtener los datos
+# Se declara la URL de d?nde obtener los datos
 theUrlMain <- "http://RAlize.RSolver.com/RAlize/data/small_sample2019clean.csv"
 
 # Se declaran los nombres de las columnas
 columnas <- c("texto","sentimiento")
 
 # Se cargan datos principales a una estructura (commentsdataset), asignando nombres de atributos a las columnas
-commentsdataset <- read.csv(file = theUrlMain, header = FALSE, sep = ";", col.names=columnas, skipNul = TRUE)
+commentsdataset <- read.csv(file = theUrlMain, header = FALSE, sep = ";", col.names=columnas, skipNul = TRUE, encoding = 'UTF-8')
 
-# Se define in seed único, para que la repetición aleatoria, coincida entre corridas
+dim(commentsdataset)
+str(commentsdataset)
+head(commentsdataset, 2)
+
+
+table(commentsdataset$sentimiento) #para conocer el total de sentimientos positivos y negativos
+
+# usando Corpus de la libreria tm creamos el corpus con la columna texto del dataframe
+corpus <- Corpus(VectorSource(commentsdataset$texto))
+
+length(corpus)
+content(corpus[[10]])  #para mostrar el contenido del corpus en la posicion 10 y como cambia despues del tratamiento
+
+corpus <- tm_map(corpus, tolower) # bajamos todos los textos a minusculas
+
+content(corpus[[10]])
+
+corpus <- tm_map(corpus, removePunctuation)  # eliminamos todos los signos de puntuacion  y simbolos
+
+content(corpus[[10]])
+
+stopwords("spanish") [1:10] #cargamos las  10 primeras stopwords  en españolde la lista de la libreria tm
+
+corpus <- tm_map(corpus, removeWords, c(stopwords("spanish"))) # removemos las stopwords del corpus
+
+content(corpus[[10]])
+
+corpus <- tm_map(corpus, stemDocument)
+
+content(corpus[[10]])
+
+frecuencias <- DocumentTermMatrix(corpus) # creamos la matriz de frecuencias de los terminos del corpus
+
+frecuencias
+
+inspect(frecuencias[750:800,505:515])
+
+findFreqTerms(frecuencias, lowfreq = 1)
+
+dispercion <- removeSparseTerms(frecuencias, 0.995) # removemos los terminos que con menos frecuencia
+
+dispercion
+
+# Posteriormente creamos  el dataframe con la matriz de terminos y le adjuntamos la columna correspondiente a los sentimientos
+commentdispercion <- as.data.frame(as.matrix(dispercion))
+
+colnames(commentdispercion) = make.names(colnames(commentdispercion))
+
+commentdispercion$sentimiento <- commentsdataset$sentimiento
+
+commentdispercion$sentimiento <- as.factor(commentdispercion$sentimiento)
+
+str(commentdispercion$sentimiento)
+
+colnames(commentdispercion)
+
+# Se define un seed unico, para que la repeticion aleatoria, coincida entre corridas
 set.seed(1)
-ratio = sample(1:nrow(commentsdataset), size = 0.80 * nrow(commentsdataset)) # Proporción: 80%/20%
-Train = commentsdataset[ratio,] 
-Test = commentsdataset[-ratio,] 
+split <- sample.split(commentdispercion$sentimiento, SplitRatio = 0.8)
+Train = subset(commentdispercion, split==TRUE) 
+Test  = subset(commentdispercion, split==FALSE)
 
-# Como referencia se imprime la proporción de datos del atributo de interés: ingreso
+# Como referencia se imprime la proporcion de datos del atributo de interess: sentimiento
 table(Train$sentimiento)
 table(Test$sentimiento)
 
+bechmark = 680/914
 
-# Aquí va la transformación del texto variable a un vocabulario 
-full_text <- paste(commentsdataset[,1], collapse = " ")
+# procedemos a correr los diferentes modelos de clasificacion SVM, DT, y NB
 
-#se puede hacer todo con la libreria tm https://stackoverflow.com/questions/32225770/r-tm-removewords-function-not-removing-words
-clean_text <- tolower(full_text) # Todo el texto a minusculas
-clean_text <- str_replace_all(clean_text,"http\\S*", "") # remover todas las palabras que tengan http
-clean_text <- str_replace_all(clean_text,"https\\S*", "") # remover todas las palabras que tengan https
-clean_text <- str_replace_all(clean_text,"[[:punct:]]", " ") # remover todos los signos de puntuacion
-clean_text <- str_replace_all(clean_text,"[[:digit:]]", " ") # remover todos los numeros
-clean_text <- str_replace_all(clean_text,"[\\s]+", " ") # remover todas las cadenas que tengan mas de 1 espacio
+#SVM - Support Vector Machine
+SVM <- svm(as.factor(sentimiento) ~ ., data = Train)
+summary(SVM)
+predicSVM <- predict(SVM, newdata = Test)
+confusionMatrix(predicSVM, Test$sentimiento)
 
-#falta remover los strings con una sola letra
-
-# remover las stopwords del texto
-clean_text <- removeWords(clean_text,stopwords("spanish"))
-words <- tokenize_words(clean_text)
-
-# Creo la tabla de frecuencias
-tabla <- table(words[[1]])
-tabla <- data_frame(word = names(tabla), count = as.numeric(tabla))
-arrange(tabla,desc(count))
-
-
-
-# Decision ., data=Train, method="class", minbucket=10)
+# Decision Tree
+tree.model <- rpart(as.factor(sentimiento) ~ ., data=Train, method="class", minbucket=10)
 tree.predict <- predict(tree.model, Test, type = "class")
-print("Resultados Árbol de Decisión")
+print("Resultados ?rbol de Decisi?n")
 confusionMatrix(tree.predict, Test$sentimiento) 
 
 # Naive Bayes
-NB_model <- naiveBayes(sentimiento ~ ., data=Train)
-NB_predict <- predict(NB_model, Test[,-12])
+NB_model <- naiveBayes(as.factor(sentimiento) ~ ., data=Train)
+NB_predict <- predict(NB_model, Test[,-373])
 print("Resultados Naive Bayes")
-confusionMatrix(NB_predict, Test$sentimiento) 
+confusionMatrix(NB_predict, Test$sentimiento)
